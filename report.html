@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Báo Cáo Bài Tập 4: Xử Lý Lỗi Cho Kafka Consumer Với Retry Và Dead Letter Queue (DLQ)</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 15mm 18mm 15mm;
+            @bottom-right {
+                content: counter(page);
+            }
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #24292e;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+        }
+        .header-container {
+            border-bottom: 3px solid #d9381e;
+            padding-bottom: 12px;
+            margin-bottom: 20px;
+        }
+        .badge {
+            display: inline-block;
+            background: #ffebe8;
+            color: #d9381e;
+            font-weight: bold;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        h1 {
+            color: #d9381e;
+            font-size: 22px;
+            margin: 5px 0 10px 0;
+            line-height: 1.3;
+        }
+        .subtitle {
+            font-size: 14px;
+            color: #57606a;
+            margin-bottom: 10px;
+            font-style: italic;
+        }
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            background: #f6f8fa;
+            padding: 10px 14px;
+            border-radius: 6px;
+            border-left: 4px solid #d9381e;
+            font-size: 12px;
+        }
+        .meta-item strong {
+            color: #24292e;
+        }
+        h2 {
+            color: #24292e;
+            font-size: 16px;
+            border-bottom: 1.5px solid #d0d7de;
+            padding-bottom: 5px;
+            margin-top: 22px;
+            margin-bottom: 10px;
+        }
+        h3 {
+            color: #32383f;
+            font-size: 14px;
+            margin-top: 14px;
+            margin-bottom: 6px;
+        }
+        p, li {
+            text-align: justify;
+        }
+        ul, ol {
+            margin: 6px 0 10px 20px;
+            padding: 0;
+        }
+        li {
+            margin-bottom: 4px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 14px 0;
+            font-size: 12px;
+        }
+        th, td {
+            border: 1px solid #d0d7de;
+            padding: 8px 10px;
+            text-align: left;
+        }
+        th {
+            background: #f6f8fa;
+            font-weight: 600;
+            color: #24292e;
+        }
+        tr:nth-child(even) {
+            background-color: #fcfdfd;
+        }
+        .alert-box {
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin: 12px 0;
+            font-size: 12px;
+        }
+        .alert-danger {
+            background: #ffebe9;
+            border-left: 4px solid #cf222e;
+            color: #82071e;
+        }
+        .alert-success {
+            background: #dafbe1;
+            border-left: 4px solid #1a7f37;
+            color: #116329;
+        }
+        .alert-warning {
+            background: #fff8c5;
+            border-left: 4px solid #9a6700;
+            color: #633c01;
+        }
+        pre {
+            background: #f6f8fa;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.45;
+            overflow-x: auto;
+            margin: 8px 0 12px 0;
+        }
+        code {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11px;
+            background: #eff1f3;
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: #b31d28;
+        }
+        pre code {
+            background: none;
+            padding: 0;
+            color: #24292e;
+        }
+        .page-break {
+            page-break-before: always;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 10px;
+            border-top: 1px solid #eaecef;
+            font-size: 11px;
+            color: #6a737d;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header-container">
+    <div class="badge">BÁO CÁO KỸ THUẬT & KIẾN TRÚC THÔNG ĐIỆP KAFKA</div>
+    <h1>BÀI TẬP 4: XỬ LÝ LỖI KAFKA CONSUMER VỚI RETRY VÀ DEAD LETTER QUEUE (DLQ)</h1>
+    <div class="subtitle">Giải cứu Consumer khỏi tình trạng kẹt cứng Poison Pill, bảo toàn luồng xử lý kho hàng StoreX</div>
+    <div class="meta-grid">
+        <div class="meta-item"><strong>Khóa học:</strong> Microservices System Design (Rikkei Education)</div>
+        <div class="meta-item"><strong>Hệ thống:</strong> Nền tảng E-Commerce StoreX</div>
+        <div class="meta-item"><strong>Module:</strong> inventory-service lắng nghe topic "order-events"</div>
+        <div class="meta-item"><strong>Công nghệ:</strong> Apache Kafka, Spring Kafka 3.x, DefaultErrorHandler, DeadLetterPublishingRecoverer</div>
+    </div>
+</div>
+
+<h2>1. Bối cảnh Nghiệp vụ & Hiện trạng Sự cố</h2>
+<p>
+    Tại kho vận trung tâm <strong>StoreX</strong>, <code>InventoryConsumer</code> lắng nghe các sự kiện đặt hàng từ topic <code>order-events</code> (Consumer Group: <code>inventory-group</code>) để trừ số lượng sản phẩm tồn kho.
+</p>
+<p>
+    Thỉnh thoảng, dịch vụ đặt hàng do sự cố sinh chuỗi JSON hỏng định dạng (thiếu dấu đóng ngoặc <code>}</code>). Khi Consumer đọc trúng bản tin này, việc deserialize hoặc xử lý thất bại và ném Exception. Lúc này, Consumer rơi vào trạng thái <strong>"kẹt cứng" (Infinite Retry Loop)</strong>: liên tục đọc lại đúng bản tin lỗi đó. Toàn bộ các đơn hàng hợp lệ phía sau bị phong tỏa, kho hàng StoreX tê liệt hoàn toàn.
+</p>
+
+<pre><code>// InventoryConsumer.java -- HIỆN TRẠNG GÂY KẸT CONSUMER
+@Service
+public class InventoryConsumer {
+    @KafkaListener(topics = "order-events", groupId = "inventory-group")
+    public void consume(OrderEvent event) {
+        // Nếu event bị lỗi JSON, exception throw ra ngoài làm Consumer bị kẹt vĩnh viễn!
+        inventoryService.deductStock(event.getProductId(), event.getQuantity());
+    }
+}</code></pre>
+
+<h2>2. Phần 1 - Phân Tích Cơ Chế Kỹ Thuật Chuyên Sâu</h2>
+
+<h3>2.1. Cơ chế đọc và quản lý Offset trong Apache Kafka</h3>
+<ul>
+    <li>
+        <strong>Current Offset (Read Position - Vị trí đọc hiện tại):</strong>
+        Là con trỏ trỏ tới vị trí của bản tin tiếp theo mà Consumer chuẩn bị đọc trong một Partition. Con trỏ này tăng dần trong RAM của Consumer sau mỗi lần gọi hàm <code>poll()</code>.
+    </li>
+    <li>
+        <strong>Committed Offset (Vị trí đã xác nhận thành công):</strong>
+        Là vị trí Offset cao nhất mà Consumer Group đã xác nhận với Kafka Broker rằng: <em>"Đã xử lý xong các bản tin trước offset này"</em>.
+        Giá trị này được lưu bền vững vào topic hệ thống <code>__consumer_offsets</code>.
+        Khi một Consumer bị crash hoặc xảy ra quá trình tái cân bằng (Rebalance), Consumer mới được cấp quyền sẽ căn cứ vào <code>Committed Offset</code> để tiếp tục đọc từ <code>Committed Offset + 1</code>, tránh mất mát dữ liệu.
+    </li>
+</ul>
+
+<h3>2.2. Lý do Consumer bị kẹt khi gặp Exception mà không tự chuyển sang bản tin tiếp theo</h3>
+<div class="alert-box alert-danger">
+    <strong>Bản tin lỗi được gọi là "Poison Pill" (Viên thuốc độc)!</strong>
+</div>
+<ol>
+    <li>
+        <strong>Offset không được Commit:</strong> Theo cơ chế At-least-once Delivery, khi phương thức <code>@KafkaListener</code> quăng một ngoại lệ chưa được bắt (Unhandled Exception), Spring Kafka hiểu rằng việc xử lý chưa hoàn tất. Vì vậy, offset của bản tin đó <strong>KHÔNG được commit</strong>.
+    </li>
+    <li>
+        <strong>Cơ chế Seek ngược lại vị trí lỗi:</strong> Mặc định, Kafka ErrorHandler sẽ gọi lệnh <code>consumer.seek(partition, offset)</code> để tua con trỏ đọc quay ngược lại vị trí bản tin vừa gặp sự cố.
+    </li>
+    <li>
+        <strong>Vòng lặp vô hạn (Infinite Loop):</strong> Trong lần <code>poll()</code> kế tiếp, Consumer lại lấy về đúng bản tin hỏng đó. Bản tin tiếp tục ném lỗi, tiếp tục không được commit, lại bị seek ngược lại... Quá trình này lặp lại liên tục, Consumer bị khóa cứng và không bao giờ đọc được các đơn hàng hợp lệ phía sau.
+    </li>
+</ol>
+
+<div class="page-break"></div>
+
+<h2>3. Phần 2 - Thiết Kế Giải Pháp & Mã Nguồn Chuẩn Hóa</h2>
+
+<h3>3.1. Thiết kế cơ chế Retry 3 lần & Dead Letter Queue (DLQ)</h3>
+<ul>
+    <li><strong>Thử lại (Retry) tối đa 3 lần:</strong> Sử dụng <code>DefaultErrorHandler</code> với <code>FixedBackOff(1000L, 2L)</code> (1 lần chạy ban đầu + 2 lần thử lại, mỗi lần cách nhau 1.000ms = 1s).</li>
+    <li><strong>Dead Letter Queue:</strong> Nếu sau 3 lần vẫn thất bại, <code>DeadLetterPublishingRecoverer</code> sẽ tự động trích xuất bản tin lỗi và xuất bản sang topic chết <strong><code>order-events.DLT</code></strong>.</li>
+    <li><strong>Commit Offset & Giải phóng hàng đợi:</strong> Sau khi đã gửi bản tin vào DLT an toàn, ErrorHandler tiến hành Commit Offset của bản tin đó. Consumer lập tức chuyển sang đọc bản tin tiếp theo, bảo đảm luồng xử lý kho hàng luôn thông suốt.</li>
+    <li><strong>ErrorHandlingDeserializer:</strong> Bọc ngoài <code>JsonDeserializer</code> để bắt các bản tin JSON hỏng cú pháp ngay từ tầng giải mã mà không làm gãy consumer loop.</li>
+</ul>
+
+<h3>3.2. Cấu hình <code>KafkaConsumerConfig.java</code></h3>
+<pre><code>@Configuration
+@Slf4j
+public class KafkaConsumerConfig {
+
+    public static final String DLT_TOPIC = "order-events.DLT";
+
+    @Bean
+    public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(KafkaOperations&lt;Object, Object&gt; kafkaOperations) {
+        return new DeadLetterPublishingRecoverer(kafkaOperations,
+                (record, exception) -> {
+                    log.error("DeadLetterPublishingRecoverer: Bản tin tại offset [{}] đã thử đủ 3 lần. Đẩy vào DLT [{}]! Lỗi: {}",
+                            record.offset(), DLT_TOPIC, exception.getMessage());
+                    return new TopicPartition(DLT_TOPIC, record.partition());
+                });
+    }
+
+    @Bean
+    public DefaultErrorHandler defaultErrorHandler(DeadLetterPublishingRecoverer recoverer) {
+        FixedBackOff backOff = new FixedBackOff(1000L, 2L); // 1 lần gốc + 2 lần retry = 3 lần thử
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+
+        errorHandler.setRetryListeners((record, ex, deliveryAttempt) -> {
+            log.warn("Retry Listener: Đang thử lại lần {}/3 cho bản tin offset [{}]. Lỗi: {}",
+                    deliveryAttempt, record.offset(), ex.getMessage());
+        });
+        return errorHandler;
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory&lt;Object, Object&gt; kafkaListenerContainerFactory(
+            ConsumerFactory&lt;Object, Object&gt; consumerFactory,
+            DefaultErrorHandler defaultErrorHandler) {
+
+        ConcurrentKafkaListenerContainerFactory&lt;Object, Object&gt; factory = new ConcurrentKafkaListenerContainerFactory&lt;&gt;();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(defaultErrorHandler);
+        return factory;
+    }
+}</code></pre>
+
+<h3>3.3. Lớp Consumer Đã Sửa Đổi (<code>InventoryConsumer.java</code>)</h3>
+<pre><code>@Service
+@Slf4j
+@RequiredArgsConstructor
+public class InventoryConsumer {
+
+    private final InventoryService inventoryService;
+
+    @KafkaListener(topics = "order-events", groupId = "inventory-group")
+    public void consume(OrderEvent event) {
+        log.info("Tiếp nhận OrderEvent: orderId={}, productId={}, quantity={}",
+                event.getOrderId(), event.getProductId(), event.getQuantity());
+
+        inventoryService.deductStock(event.getProductId(), event.getQuantity());
+        log.info("Khấu trừ kho thành công cho đơn hàng: {}", event.getOrderId());
+    }
+}</code></pre>
+
+<div class="page-break"></div>
+
+<h3>3.4. Lớp Giám Sát Topic Hộp Thư Chết (<code>InventoryDltConsumer.java</code>)</h3>
+<pre><code>@Component
+@Slf4j
+public class InventoryDltConsumer {
+
+    @KafkaListener(topics = "order-events.DLT", groupId = "inventory-dlt-group")
+    public void consumeDlt(
+            ConsumerRecord&lt;String, Object&gt; record,
+            @Header(value = KafkaHeaders.DLT_ORIGINAL_OFFSET, required = false) byte[] originalOffset,
+            @Header(value = KafkaHeaders.DLT_EXCEPTION_MESSAGE, required = false) String exceptionMessage) {
+
+        log.error("🚨 [DLT MONITOR] Phát hiện bản tin lỗi được đưa vào Dead Letter Queue!");
+        log.error("Chi tiết: Topic={}, Partition={}, Offset={}, Key={}",
+                record.topic(), record.partition(), record.offset(), record.key());
+        log.error("Nội dung Payload hỏng: {}", record.value());
+        log.error("Nguyên nhân Exception: {}", exceptionMessage);
+    }
+}</code></pre>
+
+<h2>4. Kết Quả Kiểm Thử Đơn Vị (Unit Test)</h2>
+<p>
+    Kiểm thử hành vi Retry và định tuyến Dead Letter Queue trong <code>InventoryConsumerTest.java</code>:
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Kịch bản Kiểm thử</th>
+            <th>Mục tiêu & Dữ liệu đầu vào</th>
+            <th>Kết quả mong đợi</th>
+            <th>Trạng thái</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><code>testConsume_Success</code></td>
+            <td>Gửi sự kiện đặt hàng hợp lệ (orderId: 5001, productId: 101, quantity: 3).</td>
+            <td>Hàm <code>deductStock()</code> được gọi chính xác 1 lần, không nảy sinh lỗi.</td>
+            <td><span style="color: #1a7f37; font-weight: bold;">PASSED ✅</span></td>
+        </tr>
+        <tr>
+            <td><code>testConsume_ServiceThrowsException_TriggersRetry</code></td>
+            <td>Mô phỏng <code>inventoryService</code> ném lỗi (Database deadlock hoặc Out of stock).</td>
+            <td>Consumer ném exception ra ngoài để kích hoạt quy trình Retry của ErrorHandler.</td>
+            <td><span style="color: #1a7f37; font-weight: bold;">PASSED ✅</span></td>
+        </tr>
+        <tr>
+            <td><code>testDeadLetterPublishingRecoverer_RoutesToDlt</code></td>
+            <td>Mô phỏng bản tin JSON hỏng, hết số lượt retry.</td>
+            <td><code>DeadLetterPublishingRecoverer</code> gọi <code>kafkaOperations.send()</code> gửi sang <code>order-events.DLT</code>.</td>
+            <td><span style="color: #1a7f37; font-weight: bold;">PASSED ✅</span></td>
+        </tr>
+        <tr>
+            <td><code>testDefaultErrorHandler_RetryPolicyCount</code></td>
+            <td>Kiểm tra thông số cấu hình BackOff của ErrorHandler.</td>
+            <td>Xác nhận chính xác 2 lần retry (tổng 3 lần thử), chu kỳ backoff 1.000ms.</td>
+            <td><span style="color: #1a7f37; font-weight: bold;">PASSED ✅</span></td>
+        </tr>
+    </tbody>
+</table>
+
+<div class="alert-box alert-success">
+    <strong>Xác nhận kết quả:</strong> 100% các bài test đều vượt qua (Build SUCCESS). Consumer không bao giờ bị kẹt và mọi bản tin hỏng đều được cách ly sang Dead Letter Topic an toàn.
+</div>
+
+<h2>5. Kết Luận</h2>
+<p>
+    Việc triển khai <code>DefaultErrorHandler</code> kết hợp <code>DeadLetterPublishingRecoverer</code> và <code>ErrorHandlingDeserializer</code> đã khắc phục triệt để sự cố "Consumer Ngất Xỉu":
+</p>
+<ul>
+    <li>Tự động phục hồi trước các lỗi mạng tạm thời nhờ cơ chế Retry 3 lần.</li>
+    <li>Cô lập các bản tin hỏng (Poison Pills) vào Dead Letter Queue để phân tích và can thiệp sau, bảo vệ 100% luồng xử lý đơn hàng phía sau không bị gián đoạn.</li>
+</ul>
+
+<div class="footer">
+    Báo Cáo Kỹ Thuật - Hệ Thống Quản Lý Kho StoreX | Rikkei Education &copy; 2026
+</div>
+
+</body>
+</html>
